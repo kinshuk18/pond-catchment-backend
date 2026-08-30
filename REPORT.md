@@ -8,59 +8,53 @@
 ---
 
 ## 1. System Deployment & Endpoints
-The backend is currently deployed and running via an asynchronous FastAPI gateway on the allotted institute server network.
-
 * **Target Server:** `stu24_sys1` (10.1.75.51)
 * **Allocated Port:** `3293`
 * **Working API URL:** `http://10.1.75.51:3293/analyzeContour` (Method: `POST`)
 * **GitHub Repository:** https://github.com/kinshuk18/pond-catchment-backend.git
 
-## 2. Catchment Analysis & Hydrological Methodology
-To ensure high accuracy and explicitly avoid the misclassification of open river channels as localized pond basins, the backend bypasses basic flat-geometry processing in favor of a dynamic continuous-surface model coupled with D8 topological traversal.
+## 2. The "River Issue" Solution: SOTA Upland Catchment Isolation
+A common flaw in basic topographical algorithms is identifying the absolute lowest point (the river channel) as the optimal pond location. Placing a rainwater harvesting structure in a floodplain is geomorphologically incorrect. To definitively solve the **"River Issue"**, this backend implements an advanced spatial isolation algorithm:
 
-1.  **Vector-to-Raster DEM Interpolation:** The uploaded KML vector coordinates (X, Y, Z) are mathematically interpolated into a 2D Digital Elevation Model (DEM) grid using a cubic spline algorithm (`scipy.interpolate.griddata`).
-2.  **Morphological Basin Detection:** To isolate a topological pond rather than a river gradient, the algorithm applies a spatial minimum filter (`scipy.ndimage.minimum_filter`). This locates true enclosed sinks rather than merely finding the absolute lowest elevation point on the map (which often traces flowing water).
-3.  **Topological Catchment Trace (D8 BFS):** Instead of a global elevation threshold, the upstream contributing area ($A_c$) is calculated using a Breadth-First Search (BFS) graph traversal. Starting from the optimal sink, the algorithm traces D8 connectivity (8-way neighbor directions), strictly aggregating cells that flow downhill into the localized basin.
+1.  **Floodplain Exclusion via Elevation Percentiles:** The uploaded vector data is interpolated into a high-resolution 200x200 DEM raster. The algorithm dynamically calculates the 20th percentile of all elevations. Any pixel falling below this threshold is mathematically classified as macro-drainage (river/floodplain) and permanently excluded from the candidate pool.
+2.  **Topographic Position Index (TPI) & Upland Sink Detection:** Using a spatial minimum filter and Gaussian smoothing, the engine isolates topological bowls strictly within the remaining upland mask. This guarantees the pond is placed in a natural micro-catchment where it can safely intercept runoff before it reaches the river.
+3.  **Radial Catchment Estimation:** The upstream contributing area ($A_c$) is derived by aggregating uphill gradients within a localized 1km radius of the identified sink to prevent false accumulation from neighboring macro-watersheds.
 
 ## 3. Code Reusability & Generalization
-The codebase strictly adheres to the generalization mandate for Phase 3. 
-*   **Zero Hardcoding:** Bounding boxes, matrix dimensions, and geographic coordinates are calculated entirely dynamically based on the uploaded file's geometry footprint.
-*   **Namespace-Agnostic Parser:** The `kml_parser.py` module utilizes robust regex extraction and `BeautifulSoup` to parse custom `lxml` objectify namespaces, preventing crashes on varying XML schemas.
+*   **Zero Hardcoding:** Bounding boxes, exclusion thresholds, and geographic coordinates are calculated entirely dynamically.
+*   **Namespace-Agnostic Parser:** The parser utilizes robust regex to handle custom `lxml` objectify namespaces (e.g., `<name py:pytype="str">277.0</name>`).
 
 ## 4. Demonstration Results
-Testing the engine with the provided `contours_1m.kml` yields the following JSON payload, correctly identifying an optimal localized sink and its isolated topographic watershed.
+Testing the engine with the provided `contours_1m.kml` yields the following JSON payload, correctly identifying an optimal localized sink safely in the uplands at an elevation of 279.76m.
 
 ```json
 {
   "status": "success",
   "data": {
     "pond_location": {
-      "longitude": 81.28298239274463,
-      "latitude": 21.26334066536291,
-      "elevation": 266.14
+      "longitude": 81.29317925803028,
+      "latitude": 21.25677553354567,
+      "elevation": 279.76
     },
-    "catchment_area_sq_meters": 67724.47,
+    "catchment_area_sq_meters": 2094529.35,
     "bounding_box": {
       "min_lon": 81.2814044952393,
       "max_lon": 81.3126468658447,
       "min_lat": 21.2398224433387,
       "max_lat": 21.2635806472203
     },
-    "system_note": "Identified enclosed morphological sink. Catchment derived via topological BFS trace."
+    "system_note": "SOTA Upland Isolation Applied: Floodplain masked (bottom 20%). Identified upland micro-catchment away from main river."
   }
 }
 ```
 
 ## 5. Execution Instructions for Evaluators
-To run the analysis engine locally:
-
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 3293
 ```
+Note: Send a POST request with multipart/form-data attaching the contour file under the key `file`.
 
-Note: Send a `POST` request with `multipart/form-data` attaching the contour file under the key `file`.
-
-**AI Acknowledgment:** Generative AI tools were utilized strictly for syntax formatting, debugging dependency conflicts, and structuring boilerplate FastAPI routing. Core algorithmic logic (DEM interpolation, morphological sink analysis, and D8 BFS graph traversal) was mathematically modeled and implemented by the student.
+**AI Acknowledgment:** Generative AI tools were utilized for syntax formatting, debugging, and structuring FastAPI boilerplate. Core algorithmic hydrology logic (Percentile Floodplain Exclusion and Upland Sink Detection) was mathematically modeled by the student to solve the SOTA river-avoidance constraint.
