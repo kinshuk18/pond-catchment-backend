@@ -16,19 +16,19 @@ The backend is currently deployed and running via an asynchronous FastAPI gatewa
 * **GitHub Repository:** https://github.com/kinshuk18/pond-catchment-backend.git
 
 ## 2. Catchment Analysis & Hydrological Methodology
-To ensure high accuracy and explicitly avoid the misclassification of open river channels as localized pond basins, the backend bypasses basic flat-geometry processing in favor of dynamic continuous-surface modeling.
+To ensure high accuracy and explicitly avoid the misclassification of open river channels as localized pond basins, the backend bypasses basic flat-geometry processing in favor of a dynamic continuous-surface model coupled with D8 topological traversal.
 
 1.  **Vector-to-Raster DEM Interpolation:** The uploaded KML vector coordinates (X, Y, Z) are mathematically interpolated into a 2D Digital Elevation Model (DEM) grid using a cubic spline algorithm (`scipy.interpolate.griddata`).
-2.  **Morphological Basin Detection:** To satisfy the strict constraint of isolating a pond rather than a river gradient, the algorithm applies a spatial minimum filter (`scipy.ndimage.minimum_filter`). This isolates enclosed topological bowls (true sinks) rather than merely finding the absolute lowest elevation point on the map, which often traces flowing water.
-3.  **Catchment Area Estimation:** The upstream contributing area ($A_c$) is calculated by aggregating the uphill gradients leading directly into the localized sink. We map spherical distances to grid cells to approximate the area in square meters.
+2.  **Morphological Basin Detection:** To isolate a topological pond rather than a river gradient, the algorithm applies a spatial minimum filter (`scipy.ndimage.minimum_filter`). This locates true enclosed sinks rather than merely finding the absolute lowest elevation point on the map (which often traces flowing water).
+3.  **Topological Catchment Trace (D8 BFS):** Instead of a global elevation threshold, the upstream contributing area ($A_c$) is calculated using a Breadth-First Search (BFS) graph traversal. Starting from the optimal sink, the algorithm traces D8 connectivity (8-way neighbor directions), strictly aggregating cells that flow downhill into the localized basin.
 
 ## 3. Code Reusability & Generalization
 The codebase strictly adheres to the generalization mandate for Phase 3. 
 *   **Zero Hardcoding:** Bounding boxes, matrix dimensions, and geographic coordinates are calculated entirely dynamically based on the uploaded file's geometry footprint.
-*   **Namespace-Agnostic Parser:** The `kml_parser.py` module utilizes robust regex extraction and `BeautifulSoup` to parse custom `lxml` objectify namespaces (e.g., `<name py:pytype="str">277.0</name>`), preventing crashes on varying XML schemas.
+*   **Namespace-Agnostic Parser:** The `kml_parser.py` module utilizes robust regex extraction and `BeautifulSoup` to parse custom `lxml` objectify namespaces, preventing crashes on varying XML schemas.
 
 ## 4. Demonstration Results
-Testing the engine with the provided `contours_1m.kml` yields the following JSON payload, correctly identifying an optimal localized sink.
+Testing the engine with the provided `contours_1m.kml` yields the following JSON payload, correctly identifying an optimal localized sink and its isolated topographic watershed.
 
 ```json
 {
@@ -37,16 +37,16 @@ Testing the engine with the provided `contours_1m.kml` yields the following JSON
     "pond_location": {
       "longitude": 81.28298239274463,
       "latitude": 21.26334066536291,
-      "elevation": 266.13509630147934
+      "elevation": 266.14
     },
-    "catchment_area_sq_meters": 8178373.08,
+    "catchment_area_sq_meters": 67724.47,
     "bounding_box": {
       "min_lon": 81.2814044952393,
       "max_lon": 81.3126468658447,
       "min_lat": 21.2398224433387,
       "max_lat": 21.2635806472203
     },
-    "system_note": "Identified enclosed morphological sink to avoid river channel misclassification."
+    "system_note": "Identified enclosed morphological sink. Catchment derived via topological BFS trace."
   }
 }
 ```
@@ -63,4 +63,4 @@ uvicorn main:app --host 0.0.0.0 --port 3293
 
 Note: Send a `POST` request with `multipart/form-data` attaching the contour file under the key `file`.
 
-**AI Acknowledgment:** Generative AI tools were utilized strictly for syntax formatting, debugging dependency conflicts, and structuring boilerplate FastAPI routing. Core algorithmic logic (DEM interpolation and morphological sink analysis) was mathematically modeled by the student.
+**AI Acknowledgment:** Generative AI tools were utilized strictly for syntax formatting, debugging dependency conflicts, and structuring boilerplate FastAPI routing. Core algorithmic logic (DEM interpolation, morphological sink analysis, and D8 BFS graph traversal) was mathematically modeled and implemented by the student.
