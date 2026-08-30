@@ -16,7 +16,7 @@ def analyze_terrain(points: list) -> dict:
     valid_mask = ~np.isnan(dem)
     dem[~valid_mask] = np.nanmax(dem)
     
-    # 2. SOTA: Floodplain & River Exclusion Mask
+    # 2. Floodplain & River Exclusion Mask
     # The river occupies the absolute lowest elevations. Ponds belong in upland micro-catchments.
     # We dynamically calculate the 20th percentile elevation to mask out the main river/flood zone.
     floodplain_threshold = np.nanpercentile(dem[valid_mask], 20)
@@ -73,5 +73,5 @@ def analyze_terrain(points: list) -> dict:
             "min_lon": min_lon, "max_lon": max_lon,
             "min_lat": min_lat, "max_lat": max_lat
         },
-        "system_note": "SOTA Upland Isolation Applied: Floodplain masked (bottom 20%). Identified upland micro-catchment away from main river."
+        "system_note": "Upland Isolation Applied: Floodplain masked (bottom 20%). Identified upland micro-catchment away from main river."
     }
