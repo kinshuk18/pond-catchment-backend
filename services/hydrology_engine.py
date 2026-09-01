@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.interpolate import griddata
-from scipy.ndimage import minimum_filter, gaussian_filter
+from scipy.ndimage import minimum_filter, gaussian_filter, distance_transform_edt
 
 def analyze_terrain(points: list) -> dict:
     pts = np.array(points)
@@ -9,69 +9,91 @@ def analyze_terrain(points: list) -> dict:
     min_lon, max_lon = lons.min(), lons.max()
     min_lat, max_lat = lats.min(), lats.max()
     
-    # 1. High-Resolution Interpolation (Increased to 200x200 for better topographical accuracy)
+    # 1. High-Res DEM Interpolation
     grid_x, grid_y = np.mgrid[min_lon:max_lon:200j, min_lat:max_lat:200j]
     dem = griddata((lons, lats), elevs, (grid_x, grid_y), method='cubic')
     
     valid_mask = ~np.isnan(dem)
     dem[~valid_mask] = np.nanmax(dem)
     
-    # 2. Floodplain & River Exclusion Mask
-    # The river occupies the absolute lowest elevations. Ponds belong in upland micro-catchments.
-    # We dynamically calculate the 20th percentile elevation to mask out the main river/flood zone.
-    floodplain_threshold = np.nanpercentile(dem[valid_mask], 20)
-    upland_mask = (dem > floodplain_threshold) & valid_mask
+    # 2. SOTA: Euclidean River Buffering (Spatial MCE)
+    # Aggressively identify the river (bottom 30% of terrain)
+    river_threshold = np.nanpercentile(dem[valid_mask], 30)
+    river_mask = (dem <= river_threshold) & valid_mask
     
-    # 3. Morphological Sink Analysis (Restricted strictly to Uplands)
-    # Smooth slightly to remove DEM interpolation artifacts before finding the sink
+    # Calculate exact distance from the river for every pixel on the map
+    dist_from_river = distance_transform_edt(~river_mask)
+    
+    # STRICT BUFFER: Ponds MUST be at least 15 spatial units away from any river pixel
+    safe_zone_mask = (dist_from_river > 15) & valid_mask
+    
+    # 3. Upland Sink Detection
     smoothed_dem = gaussian_filter(dem, sigma=1)
-    local_min = minimum_filter(smoothed_dem, size=10)
+    local_min = minimum_filter(smoothed_dem, size=12)
+    sink_mask = (smoothed_dem == local_min) & safe_zone_mask
     
-    # A valid pond MUST be a local minimum AND reside in the safe upland mask
-    sink_mask = (smoothed_dem == local_min) & upland_mask
-    
+    candidates = []
     if np.any(sink_mask):
-        sink_coords = np.where(sink_mask)
-        # Pick the deepest enclosed bowl in the upland area
-        deepest_idx = np.argmin(dem[sink_coords])
-        optimal_x = sink_coords[0][deepest_idx]
-        optimal_y = sink_coords[1][deepest_idx]
-    else:
-        # Fallback: Topographic Position Index (TPI) to find the most "bowl-like" upland area
-        mean_elev = gaussian_filter(dem, sigma=20)
-        tpi = dem - mean_elev
-        upland_tpi = np.where(upland_mask, tpi, np.inf)
-        optimal_x, optimal_y = np.unravel_index(np.argmin(upland_tpi), dem.shape)
+        sink_coords = np.argwhere(sink_mask)
         
-    target_lon = float(grid_x[optimal_x, optimal_y])
-    target_lat = float(grid_y[optimal_x, optimal_y])
-    target_elev = float(dem[optimal_x, optimal_y])
+        lat_mid = np.radians((min_lat + max_lat) / 2)
+        dx = (max_lon - min_lon) * 111320 * np.cos(lat_mid) / 200
+        dy = (max_lat - min_lat) * 111320 / 200
+        cell_area_sqm = dx * dy
+        
+        for x, y in sink_coords:
+            target_lon = float(grid_x[x, y])
+            target_lat = float(grid_y[x, y])
+            target_elev = float(dem[x, y])
+            
+            # Localized Catchment Area (1km max radius)
+            dist_x = (grid_x - target_lon) * 111320 * np.cos(lat_mid)
+            dist_y = (grid_y - target_lat) * 111320
+            dist_from_pond = np.sqrt(dist_x**2 + dist_y**2)
+            
+            local_catchment_mask = (dem > target_elev) & safe_zone_mask & (dist_from_pond < 1000)
+            catchment_area = float(np.sum(local_catchment_mask) * cell_area_sqm)
+            
+            candidates.append({
+                "x_idx": x, "y_idx": y,
+                "longitude": target_lon,
+                "latitude": target_lat,
+                "elevation": round(target_elev, 2),
+                "catchment_area_sq_meters": round(catchment_area, 2)
+            })
+            
+    # 4. Spatial Non-Maximum Suppression (NMS) for Top 3 Distinct Locations
+    # Sort all valid basins by catchment area (largest first)
+    candidates.sort(key=lambda c: c['catchment_area_sq_meters'], reverse=True)
     
-    # 4. Realistic Micro-Catchment Area Math
-    lat_mid = np.radians((min_lat + max_lat) / 2)
-    dx = (max_lon - min_lon) * 111320 * np.cos(lat_mid) / 200
-    dy = (max_lat - min_lat) * 111320 / 200
-    cell_area_sqm = dx * dy
+    top_3_ponds = []
+    min_separation = 20  # Enforce strict geographical separation between results
     
-    # Calculate distance from the pond to isolate the local micro-watershed (approx 1km radius limit)
-    dist_x = (grid_x - target_lon) * 111320 * np.cos(lat_mid)
-    dist_y = (grid_y - target_lat) * 111320
-    dist_from_pond = np.sqrt(dist_x**2 + dist_y**2)
-    
-    # Catchment is the uphill area flowing into the pond, restricted to a local radius
-    local_catchment_mask = (dem > target_elev) & upland_mask & (dist_from_pond < 1000)
-    catchment_area_sqm = float(np.sum(local_catchment_mask) * cell_area_sqm)
-    
+    for cand in candidates:
+        if len(top_3_ponds) >= 3:
+            break
+        
+        # Ensure this candidate is far away from already selected ponds
+        too_close = False
+        for selected in top_3_ponds:
+            dist = np.sqrt((cand['x_idx'] - selected['x_idx'])**2 + (cand['y_idx'] - selected['y_idx'])**2)
+            if dist < min_separation:
+                too_close = True
+                break
+                
+        if not too_close:
+            top_3_ponds.append({
+                "longitude": cand['longitude'],
+                "latitude": cand['latitude'],
+                "elevation": cand['elevation'],
+                "catchment_area_sq_meters": cand['catchment_area_sq_meters']
+            })
+            
     return {
-        "pond_location": {
-            "longitude": target_lon,
-            "latitude": target_lat,
-            "elevation": round(target_elev, 2)
-        },
-        "catchment_area_sq_meters": round(catchment_area_sqm, 2),
+        "recommended_ponds": top_3_ponds,
         "bounding_box": {
             "min_lon": min_lon, "max_lon": max_lon,
             "min_lat": min_lat, "max_lat": max_lat
         },
-        "system_note": "Upland Isolation Applied: Floodplain masked (bottom 20%). Identified upland micro-catchment away from main river."
+        "system_note": "SOTA Implemented: Spatial Multi-Criteria Evaluation with Euclidean River Buffering and Non-Maximum Suppression (NMS) for top 3 geographically distinct upland basins."
     }
