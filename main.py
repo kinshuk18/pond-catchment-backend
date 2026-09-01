@@ -6,12 +6,12 @@ from services.hydrology_engine import analyze_terrain
 app = FastAPI(title="AI Village Pond Planning API", version="1.0")
 
 @app.post("/analyzeContour")
-async def analyze_contour(file: UploadFile):
-    if not file.filename.endswith(('.kml', '.kmz')):
+async def analyze_contour(contour_map: UploadFile):
+    if not contour_map.filename.endswith(('.kml', '.kmz')):
         raise HTTPException(status_code=400, detail="Only .kml or .kmz formats are supported.")
     
     try:
-        content = await file.read()
+        content = await contour_map.read()
         points = parse_kml(content)
         analysis = analyze_terrain(points)
         
