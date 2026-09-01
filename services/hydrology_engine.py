@@ -9,25 +9,18 @@ def analyze_terrain(points: list) -> dict:
     min_lon, max_lon = lons.min(), lons.max()
     min_lat, max_lat = lats.min(), lats.max()
     
-    # 1. High-Res DEM Interpolation
     grid_x, grid_y = np.mgrid[min_lon:max_lon:200j, min_lat:max_lat:200j]
     dem = griddata((lons, lats), elevs, (grid_x, grid_y), method='cubic')
     
     valid_mask = ~np.isnan(dem)
     dem[~valid_mask] = np.nanmax(dem)
     
-    # 2. SOTA: Euclidean River Buffering (Spatial MCE)
-    # Aggressively identify the river (bottom 30% of terrain)
+    # SOTA: Euclidean River Buffering
     river_threshold = np.nanpercentile(dem[valid_mask], 30)
     river_mask = (dem <= river_threshold) & valid_mask
-    
-    # Calculate exact distance from the river for every pixel on the map
     dist_from_river = distance_transform_edt(~river_mask)
-    
-    # STRICT BUFFER: Ponds MUST be at least 15 spatial units away from any river pixel
     safe_zone_mask = (dist_from_river > 15) & valid_mask
     
-    # 3. Upland Sink Detection
     smoothed_dem = gaussian_filter(dem, sigma=1)
     local_min = minimum_filter(smoothed_dem, size=12)
     sink_mask = (smoothed_dem == local_min) & safe_zone_mask
@@ -35,7 +28,6 @@ def analyze_terrain(points: list) -> dict:
     candidates = []
     if np.any(sink_mask):
         sink_coords = np.argwhere(sink_mask)
-        
         lat_mid = np.radians((min_lat + max_lat) / 2)
         dx = (max_lon - min_lon) * 111320 * np.cos(lat_mid) / 200
         dy = (max_lat - min_lat) * 111320 / 200
@@ -46,7 +38,6 @@ def analyze_terrain(points: list) -> dict:
             target_lat = float(grid_y[x, y])
             target_elev = float(dem[x, y])
             
-            # Localized Catchment Area (1km max radius)
             dist_x = (grid_x - target_lon) * 111320 * np.cos(lat_mid)
             dist_y = (grid_y - target_lat) * 111320
             dist_from_pond = np.sqrt(dist_x**2 + dist_y**2)
@@ -55,42 +46,42 @@ def analyze_terrain(points: list) -> dict:
             catchment_area = float(np.sum(local_catchment_mask) * cell_area_sqm)
             
             candidates.append({
-                "x_idx": x, "y_idx": y,
+                "x_idx": int(x), "y_idx": int(y),
                 "longitude": target_lon,
                 "latitude": target_lat,
                 "elevation": round(target_elev, 2),
                 "catchment_area_sq_meters": round(catchment_area, 2)
             })
             
-    # 4. Spatial Non-Maximum Suppression (NMS) for Top 3 Distinct Locations
-    # Sort all valid basins by catchment area (largest first)
     candidates.sort(key=lambda c: c['catchment_area_sq_meters'], reverse=True)
     
     top_3_ponds = []
-    min_separation = 20  # Enforce strict geographical separation between results
+    min_separation = 20  
     
     for cand in candidates:
         if len(top_3_ponds) >= 3:
             break
-        
-        # Ensure this candidate is far away from already selected ponds
         too_close = False
         for selected in top_3_ponds:
             dist = np.sqrt((cand['x_idx'] - selected['x_idx'])**2 + (cand['y_idx'] - selected['y_idx'])**2)
             if dist < min_separation:
                 too_close = True
                 break
-                
         if not too_close:
-            top_3_ponds.append({
-                "longitude": cand['longitude'],
-                "latitude": cand['latitude'],
-                "elevation": cand['elevation'],
-                "catchment_area_sq_meters": cand['catchment_area_sq_meters']
-            })
+            top_3_ponds.append(cand) # FIXED KEYERROR HERE
+            
+    # Clean output payload
+    final_ponds = []
+    for p in top_3_ponds:
+        final_ponds.append({
+            "longitude": p["longitude"],
+            "latitude": p["latitude"],
+            "elevation": p["elevation"],
+            "catchment_area_sq_meters": p["catchment_area_sq_meters"]
+        })
             
     return {
-        "recommended_ponds": top_3_ponds,
+        "recommended_ponds": final_ponds,
         "bounding_box": {
             "min_lon": min_lon, "max_lon": max_lon,
             "min_lat": min_lat, "max_lat": max_lat
