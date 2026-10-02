@@ -24,7 +24,7 @@ import urllib.request
 
 url = sys.argv[1]
 last_error = None
-for attempt in range(20):
+for attempt in range(90):
     try:
         with urllib.request.urlopen(url, timeout=2) as response:
             body = response.read().decode("utf-8", "replace")
@@ -33,7 +33,7 @@ for attempt in range(20):
             last_error = f"unexpected status {response.status}"
     except Exception as exc:
         last_error = str(exc)
-    if attempt < 19:
+    if attempt < 89:
         time.sleep(1)
 raise SystemExit(1 if last_error else 1)
 ' "http://127.0.0.1:$PORT/health"

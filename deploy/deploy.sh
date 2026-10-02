@@ -71,7 +71,7 @@ if [ "$rc" -eq 255 ]; then
   exit 1
 fi
 if [ "$rc" -ne 0 ]; then
-  sshr "$HOST" 'bash ~/pond/run.sh stop 2>/dev/null; rm -rf ~/pond; if [ -d ~/pond-prev ]; then mv ~/pond-prev ~/pond && bash ~/pond/run.sh start; fi'
+  sshr "$HOST" 'bash ~/pond/run.sh stop 2>/dev/null; rm -rf ~/pond-failed; mv ~/pond ~/pond-failed; if [ -d ~/pond-prev ]; then mv ~/pond-prev ~/pond && bash ~/pond/run.sh start; fi'
   echo "ROLLED BACK"
   exit 1
 fi
