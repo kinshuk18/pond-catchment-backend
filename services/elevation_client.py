@@ -4,6 +4,8 @@ import logging
 
 import httpx
 
+from services import snapshot
+
 OPEN_TOPO_URL = "https://api.opentopodata.org/v1/srtm90m"
 OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup"
 BATCH_SIZE = 100
@@ -22,16 +24,20 @@ def _build_coordinates(
     if grid_size < 2:
         raise ValueError("grid_size must be >= 2")
     if min_lon >= max_lon or min_lat >= max_lat:
-        raise ValueError("Bounding box minimums must be smaller than maximums.")
+        raise ValueError(
+            "Bounding box minimums must be smaller than maximums.")
 
-    lons = [min_lon + i * (max_lon - min_lon) / (grid_size - 1) for i in range(grid_size)]
-    lats = [min_lat + j * (max_lat - min_lat) / (grid_size - 1) for j in range(grid_size)]
+    lons = [min_lon + i * (max_lon - min_lon) / (grid_size - 1)
+            for i in range(grid_size)]
+    lats = [min_lat + j * (max_lat - min_lat) / (grid_size - 1)
+            for j in range(grid_size)]
     return [(lon, lat) for lat in lats for lon in lons]
 
 
 def _validated_elevations(values: list[object], source: str, expected: int) -> list[float]:
     if len(values) != expected:
-        raise ValueError(f"{source} returned {len(values)} elevations; expected {expected}.")
+        raise ValueError(
+            f"{source} returned {len(values)} elevations; expected {expected}.")
     elevations: list[float] = []
     for value in values:
         if value is None:
@@ -39,7 +45,8 @@ def _validated_elevations(values: list[object], source: str, expected: int) -> l
         try:
             elevations.append(float(value))
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"{source} returned a non-numeric elevation.") from exc
+            raise ValueError(
+                f"{source} returned a non-numeric elevation.") from exc
     return elevations
 
 
@@ -48,7 +55,7 @@ async def _fetch_open_topo_data(coords: list[tuple[float, float]]) -> list[float
     elevations: list[float] = []
     async with httpx.AsyncClient(timeout=10.0) as client:
         for start in range(0, len(coords), BATCH_SIZE):
-            batch = coords[start : start + BATCH_SIZE]
+            batch = coords[start: start + BATCH_SIZE]
             locations = "|".join(f"{lat:.6f},{lon:.6f}" for lon, lat in batch)
             last_error: Exception | None = None
 
@@ -63,7 +70,8 @@ async def _fetch_open_topo_data(coords: list[tuple[float, float]]) -> list[float
                         )
                     results = payload["results"]
                     values = [result["elevation"] for result in results]
-                    elevations.extend(_validated_elevations(values, "OpenTopoData", len(batch)))
+                    elevations.extend(_validated_elevations(
+                        values, "OpenTopoData", len(batch)))
                     break
                 except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
                     last_error = exc
@@ -98,22 +106,32 @@ async def _fetch_open_elevation(coords: list[tuple[float, float]]) -> list[float
         results = payload["results"]
         values = [result["elevation"] for result in results]
     except (KeyError, TypeError) as exc:
-        raise ValueError("Open-Elevation response did not contain ordered elevation results.") from exc
+        raise ValueError(
+            "Open-Elevation response did not contain ordered elevation results.") from exc
     return _validated_elevations(values, "Open-Elevation", len(coords))
 
 
-async def fetch_elevation_grid(
+async def fetch_elevation_grid_ex(
     min_lon: float,
     max_lon: float,
     min_lat: float,
     max_lat: float,
     grid_size: int = 25,
-) -> list[list[float]]:
+) -> tuple[list[list[float]], str]:
     """
-    Sample a grid_size x grid_size lattice and return [lon, lat, elevation].
-    OpenTopoData SRTM90m is primary; Open-Elevation is a full-grid fallback.
+    Sample a grid_size x grid_size lattice; return ([lon, lat, elevation], source).
+    Order: local SRTM snapshot (if DATA_MODE allows and bbox is covered), then
+    OpenTopoData SRTM90m, then Open-Elevation as a full-grid fallback.
     """
     coords = _build_coordinates(min_lon, max_lon, min_lat, max_lat, grid_size)
+
+    if snapshot.DATA_MODE != "live" and snapshot.covers(min_lon, max_lon, min_lat, max_lat):
+        elevations = snapshot.sample_elevations(coords)
+        source = snapshot.elevation_label()
+        logger.info("Elevation source=%s grid_points=%d", source, len(coords))
+        return [[lon, lat, e] for (lon, lat), e in zip(coords, elevations)], source
+    if snapshot.DATA_MODE == "snapshot":
+        raise ValueError("Bounding box is outside the snapshot coverage.")
 
     try:
         elevations = await _fetch_open_topo_data(coords)
@@ -133,4 +151,11 @@ async def fetch_elevation_grid(
             ) from open_elevation_error
 
     logger.info("Elevation source=%s grid_points=%d", source, len(coords))
-    return [[lon, lat, elevation] for (lon, lat), elevation in zip(coords, elevations)]
+    grid = [[lon, lat, elevation]
+            for (lon, lat), elevation in zip(coords, elevations)]
+    return grid, source
+
+
+async def fetch_elevation_grid(*args, **kwargs) -> list[list[float]]:
+    """Backward-compatible wrapper that returns only the grid."""
+    return (await fetch_elevation_grid_ex(*args, **kwargs))[0]

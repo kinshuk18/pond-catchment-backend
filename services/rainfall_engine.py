@@ -12,6 +12,8 @@ from email.utils import parsedate_to_datetime
 
 import httpx
 
+from services import snapshot
+
 NASA_POWER_DAILY_URL = "https://power.larc.nasa.gov/api/temporal/daily/point"
 OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
@@ -194,6 +196,11 @@ async def estimate_water_volume(
     cache_key = (source_lat, source_lon, start.isoformat(), end.isoformat())
     cached = _RAINFALL_CACHE.get(cache_key)
 
+    if cached is None and snapshot.DATA_MODE != "live" and snapshot.covers(
+        centroid_lon, centroid_lon, centroid_lat, centroid_lat
+    ):
+        cached = snapshot.rainfall_series(centroid_lat, centroid_lon)
+
     if cached is None:
         try:
             daily_rain = await fetch_nasa_power_daily(source_lat, source_lon, start, end)
@@ -231,8 +238,9 @@ async def estimate_water_volume(
         "land_use_assumed": land_use,
         "curve_number": cn,
         "years_of_record": n_years,
+        "rainfall_source": source,
         "avg_annual_rainfall_mm": round(sum(daily_rain) / n_years, 1),
         "avg_annual_runoff_mm": round(avg_annual_runoff_mm, 1),
         "expected_water_volume_cubic_m": round(volume_cubic_m, 1),
-        "method": "SCS Curve Number (NEH-4), applied per-day to NASA POWER AG PRECTOTCORR rainfall (Open-Meteo archive fallback)",
+        "method": f"SCS Curve Number (NEH-4), applied per-day to daily rainfall ({source})",
     }

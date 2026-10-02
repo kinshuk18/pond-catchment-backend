@@ -1,0 +1,52 @@
+=== sys1 (ssh rc=0)
+api.opentopodata.org 000 0.305550s
+power.larc.nasa.gov 000 8.001324s
+archive-api.open-meteo.com 000 8.002168s
+api.open-elevation.com 000 8.002892s
+api.opentopodata.org 200 4.616220s
+power.larc.nasa.gov 200 1.091045s
+archive-api.open-meteo.com 200 0.816792s
+api.open-elevation.com 000 8.002483s
+api.opentopodata.org 200 5.588970s
+power.larc.nasa.gov 000 8.001471s
+archive-api.open-meteo.com 000 8.001236s
+api.open-elevation.com 000 8.001130s
+=== sys2 (ssh rc=0)
+api.opentopodata.org 200 5.877818s
+power.larc.nasa.gov 000 7.743411s
+archive-api.open-meteo.com 200 0.858923s
+api.open-elevation.com 429 0.609170s
+api.opentopodata.org 000 8.002634s
+power.larc.nasa.gov 200 0.594137s
+archive-api.open-meteo.com 000 8.002406s
+api.open-elevation.com 000 8.002214s
+api.opentopodata.org 200 0.647625s
+power.larc.nasa.gov 200 6.951839s
+archive-api.open-meteo.com 200 5.867516s
+api.open-elevation.com 000 8.002229s
+=== sys3 (ssh rc=0)
+api.opentopodata.org 000 8.002179s
+power.larc.nasa.gov 200 0.967584s
+archive-api.open-meteo.com 000 8.001543s
+api.open-elevation.com 000 8.002744s
+api.opentopodata.org 200 0.457147s
+power.larc.nasa.gov 200 4.958842s
+archive-api.open-meteo.com 200 5.984381s
+api.open-elevation.com 000 8.002160s
+api.opentopodata.org 000 8.000675s
+power.larc.nasa.gov 000 8.001207s
+archive-api.open-meteo.com 000 8.000639s
+api.open-elevation.com 429 0.740075s
+=== sys4 (ssh rc=0)
+api.opentopodata.org 000 8.000573s
+power.larc.nasa.gov 000 8.000721s
+archive-api.open-meteo.com 200 0.834282s
+api.open-elevation.com 429 0.591485s
+api.opentopodata.org 000 8.001503s
+power.larc.nasa.gov 200 1.004703s
+archive-api.open-meteo.com 000 8.002191s
+api.open-elevation.com 429 5.578932s
+api.opentopodata.org 000 8.002363s
+power.larc.nasa.gov 200 6.005490s
+archive-api.open-meteo.com 000 8.002601s
+api.open-elevation.com 000 8.001346s

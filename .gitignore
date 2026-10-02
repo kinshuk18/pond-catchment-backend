@@ -3,3 +3,5 @@ __pycache__/
 
 pydeps/
 *.log
+data/N21E081.hgt
+data/*.hgt.gz
