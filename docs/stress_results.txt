@@ -1,0 +1,16 @@
+base_url=http://127.0.0.1:3000
+timeout_seconds=30
+bbox_exact={"max_lat": 21.17, "max_lon": 81.31, "min_lat": 21.16, "min_lon": 81.3}
+payload_exact={"max_lat": 21.17, "max_lon": 81.31, "min_lat": 21.16, "min_lon": 81.3}
+scenario_c_lon_shift_degrees=0.0007
+metrics_before {"requests":12,"errors":0,"cache_hits":0,"cache_misses":0,"rejected_503":0,"in_flight":0,"latency_ms_p50":1.8,"latency_ms_p95":7.5,"cache_hit_rate":0.0,"pid":279207}
+scenario_a GET /health requests=200 concurrency=1 wall_seconds=1.070 req_per_s=186.86 status_counts={"200": 200} error_counts={"connection_error": 0, "timeout": 0} latency_ms={"p50":3.9,"p95":15.3,"max":31.9} x_cache_counts={}
+scenario_a GET /health requests=200 concurrency=8 wall_seconds=1.382 req_per_s=144.73 status_counts={"200": 200} error_counts={"connection_error": 0, "timeout": 0} latency_ms={"p50":71.5,"p95":97.1,"max":186.5} x_cache_counts={}
+scenario_a GET /health requests=200 concurrency=32 wall_seconds=1.603 req_per_s=124.74 status_counts={"200": 200} error_counts={"connection_error": 0, "timeout": 0} latency_ms={"p50":183.7,"p95":380.7,"max":500.2} x_cache_counts={}
+scenario_a GET /health requests=200 concurrency=64 wall_seconds=1.602 req_per_s=124.82 status_counts={"200": 200} error_counts={"connection_error": 0, "timeout": 0} latency_ms={"p50":118.5,"p95":401.6,"max":699.0} x_cache_counts={}
+scenario_b POST /analyzeArea requests=100 concurrency=8 wall_seconds=96.601 req_per_s=1.04 status_counts={"200": 92} error_counts={"connection_error": 0, "timeout": 8} latency_ms={"p50":93.8,"p95":61590.2,"max":84578.4} x_cache_counts={"DEDUP": 8, "HIT": 84}
+scenario_c POST /analyzeArea requests=60 concurrency=1 wall_seconds=36.911 req_per_s=1.63 status_counts={"200": 60} error_counts={"connection_error": 0, "timeout": 0} latency_ms={"p50":301.5,"p95":786.6,"max":10311.0} x_cache_counts={"HIT": 1, "MISS": 59}
+scenario_c POST /analyzeArea requests=60 concurrency=8 wall_seconds=34.084 req_per_s=1.76 status_counts={"200": 58} error_counts={"connection_error": 0, "timeout": 0, "unexpected:RemoteDisconnected": 2} latency_ms={"p50":1452.7,"p95":12005.4,"max":15584.6} x_cache_counts={"HIT": 27, "MISS": 31}
+scenario_c POST /analyzeArea requests=60 concurrency=16 wall_seconds=5.291 req_per_s=11.34 status_counts={"200": 10, "503": 50} error_counts={"connection_error": 0, "timeout": 0} latency_ms={"p50":694.5,"p95":4898.1,"max":5277.9} x_cache_counts={"HIT": 2, "MISS": 8}
+scenario_c POST /analyzeArea requests=60 concurrency=40 wall_seconds=19.879 req_per_s=3.02 status_counts={"200": 14, "503": 8} error_counts={"connection_error": 0, "timeout": 0, "unexpected:RemoteDisconnected": 38} latency_ms={"p50":0.0,"p95":6331.8,"max":19525.4} x_cache_counts={"HIT": 6, "MISS": 8}
+metrics_after {"requests":16,"errors":8,"cache_hits":0,"cache_misses":8,"rejected_503":8,"in_flight":0,"latency_ms_p50":5683.0,"latency_ms_p95":19124.2,"cache_hit_rate":0.0,"pid":280827}
