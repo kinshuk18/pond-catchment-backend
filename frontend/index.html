@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Village Pond Planning</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+<style>
+  :root { --accent:#1f4e79; --bg:#f5f6f8; }
+  html,body{height:100%;margin:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;}
+  #map{position:absolute;top:0;bottom:0;right:0;left:340px;}
+  #panel{position:absolute;top:0;bottom:0;left:0;width:340px;background:var(--bg);
+         box-sizing:border-box;padding:18px;overflow-y:auto;box-shadow:2px 0 6px rgba(0,0,0,.08);z-index:1000;}
+  h1{font-size:17px;color:var(--accent);margin:0 0 4px;}
+  p.sub{font-size:12.5px;color:#555;margin:0 0 16px;}
+  label{font-size:12px;font-weight:600;color:#333;display:block;margin:14px 0 4px;}
+  select{width:100%;padding:6px;font-size:13px;border:1px solid #ccc;border-radius:4px;}
+  #status{font-size:12.5px;color:#555;margin-top:12px;min-height:18px;}
+  .result-card{background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:10px;margin-top:10px;}
+  .result-card h3{margin:0 0 6px;font-size:13px;color:var(--accent);}
+  .result-card table{width:100%;font-size:12px;border-collapse:collapse;}
+  .result-card td{padding:2px 0;}
+  .result-card td.k{color:#666;}
+  .result-card td.v{text-align:right;font-weight:600;}
+  #hint{font-size:12px;color:#777;margin-top:10px;line-height:1.4;}
+  .badge{display:inline-block;background:var(--accent);color:#fff;border-radius:3px;
+         font-size:10px;padding:1px 6px;margin-right:6px;}
+</style>
+</head>
+<body>
+
+<div id="panel">
+  <h1>AI Village Pond Planning</h1>
+  <p class="sub">Draw a rectangle on the map to select a land area. The system fetches terrain and rainfall data for that area and recommends pond sites automatically.</p>
+
+  <label for="landuse">Assumed land use / cover</label>
+  <select id="landuse">
+    <option value="forest_good_cover">Forest, good cover</option>
+    <option value="pasture_fair">Pasture, fair condition</option>
+    <option value="row_crop_contoured" selected>Cultivated / row crop</option>
+    <option value="fallow_bare_soil">Fallow / bare soil</option>
+  </select>
+
+  <div id="status">Draw a rectangle on the map to begin.</div>
+  <div id="results"></div>
+
+  <div id="hint">
+    Land use sets the SCS Curve Number used for runoff estimation
+    (higher CN = more runoff). Choose whichever best matches the
+    ground cover in your selected area.
+  </div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script>
+// Backend is reached through a relative /api path. In production this is
+// resolved by the Nginx layer in front of the load-balanced FastAPI
+// instances (see deploy/nginx.conf) — the frontend never needs to know
+// which of the four systems actually served the request.
+const API_BASE = "/api";
+
+const map = L.map('map').setView([21.2517, 81.2965], 14); // default: Bhilai/Durg region
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 19
+}).addTo(map);
+
+const drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
+const resultsLayer = new L.FeatureGroup();
+map.addLayer(resultsLayer);
+
+const drawControl = new L.Control.Draw({
+  draw: { rectangle: true, polygon: false, polyline: false, circle: false, marker: false, circlemarker: false },
+  edit: { featureGroup: drawnItems }
+});
+map.addControl(drawControl);
+
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const landuseEl = document.getElementById('landuse');
+
+function setStatus(msg, isError=false) {
+  statusEl.textContent = msg;
+  statusEl.style.color = isError ? '#b00020' : '#555';
+}
+
+map.on(L.Draw.Event.CREATED, async (e) => {
+  drawnItems.clearLayers();
+  resultsLayer.clearLayers();
+  resultsEl.innerHTML = '';
+  drawnItems.addLayer(e.layer);
+
+  const bounds = e.layer.getBounds();
+  const body = {
+    min_lon: bounds.getWest(),
+    max_lon: bounds.getEast(),
+    min_lat: bounds.getSouth(),
+    max_lat: bounds.getNorth(),
+    land_use: landuseEl.value
+  };
+
+  setStatus('Fetching terrain + rainfall data and running analysis…');
+
+  try {
+    const resp = await fetch(`${API_BASE}/analyzeArea`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({}));
+      throw new Error(errBody.detail || `Server returned ${resp.status}`);
+    }
+    const payload = await resp.json();
+    renderResults(payload.data);
+    setStatus(`Found ${payload.data.recommended_ponds.length} candidate site(s).`);
+  } catch (err) {
+    setStatus(`Error: ${err.message}`, true);
+  }
+});
+
+function renderResults(data) {
+  data.recommended_ponds.forEach((pond, i) => {
+    const marker = L.marker([pond.latitude, pond.longitude]).addTo(resultsLayer);
+    const vol = pond.expected_water_volume;
+    marker.bindPopup(`
+      <b>Candidate #${i + 1}</b><br/>
+      Elevation: ${pond.elevation} m<br/>
+      Catchment area: ${(pond.catchment_area_sq_meters / 10000).toFixed(2)} ha<br/>
+      Expected water volume: ${vol ? vol.expected_water_volume_cubic_m.toLocaleString() + ' m³/yr' : 'n/a'}
+    `);
+
+    const card = document.createElement('div');
+    card.className = 'result-card';
+    card.innerHTML = `
+      <h3><span class="badge">#${i + 1}</span>${pond.catchment_area_sq_meters > 1e6
+          ? (pond.catchment_area_sq_meters / 1e6).toFixed(2) + ' km² catchment'
+          : (pond.catchment_area_sq_meters / 1e4).toFixed(2) + ' ha catchment'}</h3>
+      <table>
+        <tr><td class="k">Location</td><td class="v">${pond.latitude.toFixed(5)}, ${pond.longitude.toFixed(5)}</td></tr>
+        <tr><td class="k">Elevation</td><td class="v">${pond.elevation} m</td></tr>
+        ${vol ? `
+        <tr><td class="k">Avg. annual rainfall</td><td class="v">${vol.avg_annual_rainfall_mm} mm</td></tr>
+        <tr><td class="k">Avg. annual runoff</td><td class="v">${vol.avg_annual_runoff_mm} mm</td></tr>
+        <tr><td class="k">Expected water volume</td><td class="v">${vol.expected_water_volume_cubic_m.toLocaleString()} m³/yr</td></tr>
+        <tr><td class="k">Curve Number used</td><td class="v">${vol.curve_number}</td></tr>
+        ` : `<tr><td class="k">Water volume</td><td class="v">unavailable</td></tr>`}
+      </table>
+    `;
+    resultsEl.appendChild(card);
+  });
+
+  if (data.recommended_ponds.length) {
+    const group = new L.featureGroup(resultsLayer.getLayers());
+    map.fitBounds(group.getBounds().pad(0.3));
+  }
+}
+</script>
+</body>
+</html>

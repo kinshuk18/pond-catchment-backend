@@ -1,2 +1,5 @@
 pondenv/
 __pycache__/
+
+pydeps/
+*.log
