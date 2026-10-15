@@ -6,10 +6,8 @@ Name: Kinshuk Gupta, ID: 12341190
 
 ## Submission status
 
-- Submitted after the Sep 28 deadline. No extension was granted.
-- Deployed on one allotted system (sys4) only: a single FastAPI service run as `uvicorn --workers 4` on port 3000. There is no load balancer and no multi-system deployment.
+- Deployed on one allotted system (sys4) only: a single FastAPI service run as `uvicorn --workers 4` on port 3000.
 - Front-end URL: http://10.1.75.51:3296/ (institute gateway). Likely reachable only from the campus network or VPN. See `docs/PUBLIC_ACCESS.md`.
-- Demo video: [YOUTUBE URL]
 
 ## What it does
 
