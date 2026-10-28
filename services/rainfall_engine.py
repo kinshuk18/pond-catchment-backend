@@ -13,6 +13,9 @@ from email.utils import parsedate_to_datetime
 import httpx
 
 from services import snapshot
+from services.telemetry import get_tracer, record_span_error
+
+TRACER = get_tracer("services.rainfall_engine")
 
 NASA_POWER_DAILY_URL = "https://power.larc.nasa.gov/api/temporal/daily/point"
 OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
@@ -186,61 +189,78 @@ async def estimate_water_volume(
     years_back: int = 5,
 ) -> dict:
     """Estimate annual runoff volume without changing the SCS-CN calculation."""
-    cn = CURVE_NUMBERS.get(land_use, CURVE_NUMBERS[DEFAULT_LAND_USE])
-    end = date.today()
-    start = end.replace(year=end.year - years_back)
-
-    # NASA POWER and ERA5-Land are gridded products; a 0.1-degree cache key
-    # prevents repeated requests for neighbouring sites in the same selection.
-    source_lat, source_lon = round(centroid_lat, 1), round(centroid_lon, 1)
-    cache_key = (source_lat, source_lon, start.isoformat(), end.isoformat())
-    cached = _RAINFALL_CACHE.get(cache_key)
-
-    if cached is None and snapshot.DATA_MODE != "live" and snapshot.covers(
-        centroid_lon, centroid_lon, centroid_lat, centroid_lat
-    ):
-        cached = snapshot.rainfall_series(centroid_lat, centroid_lon)
-
-    if cached is None:
+    with TRACER.start_as_current_span("rainfall.estimate_water_volume") as span:
+        span.set_attribute("rainfall.centroid_lon", float(centroid_lon))
+        span.set_attribute("rainfall.centroid_lat", float(centroid_lat))
+        span.set_attribute("rainfall.catchment_area_sq_m", float(catchment_area_sq_m))
+        span.set_attribute("rainfall.land_use", land_use)
         try:
-            daily_rain = await fetch_nasa_power_daily(source_lat, source_lon, start, end)
-            source = "NASA POWER"
-        except Exception as nasa_error:
-            logger.warning("NASA POWER rainfall request failed; using Open-Meteo fallback: %s", nasa_error)
-            try:
-                daily_rain = await fetch_open_meteo_daily(source_lat, source_lon, start, end)
-                source = "Open-Meteo fallback"
-            except Exception as open_meteo_error:
-                raise RainfallDataSourceError(
-                    "NASA POWER primary and Open-Meteo fallback both failed. "
-                    f"NASA POWER: {nasa_error}; Open-Meteo: {open_meteo_error}"
-                ) from open_meteo_error
-        _RAINFALL_CACHE[cache_key] = (daily_rain, source)
-        cache_hit = False
-    else:
-        daily_rain, source = cached
-        cache_hit = True
+            cn = CURVE_NUMBERS.get(land_use, CURVE_NUMBERS[DEFAULT_LAND_USE])
+            end = date.today()
+            start = end.replace(year=end.year - years_back)
 
-    logger.info(
-        "Rainfall source=%s cache_hit=%s grid_cell=(%.1f, %.1f)",
-        source,
-        cache_hit,
-        source_lat,
-        source_lon,
-    )
+            # NASA POWER and ERA5-Land are gridded products; a 0.1-degree cache key
+            # prevents repeated requests for neighbouring sites in the same selection.
+            source_lat, source_lon = round(centroid_lat, 1), round(centroid_lon, 1)
+            cache_key = (source_lat, source_lon, start.isoformat(), end.isoformat())
+            cached = _RAINFALL_CACHE.get(cache_key)
 
-    total_runoff_mm = sum(_scs_runoff_mm(rainfall_mm, cn) for rainfall_mm in daily_rain)
-    n_years = max(years_back, 1)
-    avg_annual_runoff_mm = total_runoff_mm / n_years
-    volume_cubic_m = avg_annual_runoff_mm * catchment_area_sq_m / 1000.0
+            if cached is None and snapshot.DATA_MODE != "live" and snapshot.covers(
+                centroid_lon, centroid_lon, centroid_lat, centroid_lat
+            ):
+                cached = snapshot.rainfall_series(centroid_lat, centroid_lon)
 
-    return {
-        "land_use_assumed": land_use,
-        "curve_number": cn,
-        "years_of_record": n_years,
-        "rainfall_source": source,
-        "avg_annual_rainfall_mm": round(sum(daily_rain) / n_years, 1),
-        "avg_annual_runoff_mm": round(avg_annual_runoff_mm, 1),
-        "expected_water_volume_cubic_m": round(volume_cubic_m, 1),
-        "method": f"SCS Curve Number (NEH-4), applied per-day to daily rainfall ({source})",
-    }
+            if cached is None:
+                try:
+                    daily_rain = await fetch_nasa_power_daily(source_lat, source_lon, start, end)
+                    source = "NASA POWER"
+                except Exception as nasa_error:
+                    logger.warning("NASA POWER rainfall request failed; using Open-Meteo fallback: %s", nasa_error)
+                    try:
+                        daily_rain = await fetch_open_meteo_daily(source_lat, source_lon, start, end)
+                        source = "Open-Meteo fallback"
+                    except Exception as open_meteo_error:
+                        exc = RainfallDataSourceError(
+                            "NASA POWER primary and Open-Meteo fallback both failed. "
+                            f"NASA POWER: {nasa_error}; Open-Meteo: {open_meteo_error}"
+                        )
+                        record_span_error(span, exc, 502)
+                        raise exc from open_meteo_error
+                _RAINFALL_CACHE[cache_key] = (daily_rain, source)
+                cache_hit = False
+            else:
+                daily_rain, source = cached
+                cache_hit = True
+
+            span.set_attribute("rainfall.source", source)
+            span.set_attribute("rainfall.cache_hit", cache_hit)
+            span.set_attribute("rainfall.daily_samples", len(daily_rain))
+
+            logger.info(
+                "Rainfall source=%s cache_hit=%s grid_cell=(%.1f, %.1f)",
+                source,
+                cache_hit,
+                source_lat,
+                source_lon,
+            )
+
+            total_runoff_mm = sum(_scs_runoff_mm(rainfall_mm, cn) for rainfall_mm in daily_rain)
+            n_years = max(years_back, 1)
+            avg_annual_runoff_mm = total_runoff_mm / n_years
+            volume_cubic_m = avg_annual_runoff_mm * catchment_area_sq_m / 1000.0
+
+            span.set_attribute("rainfall.expected_volume_m3", round(volume_cubic_m, 1))
+
+            return {
+                "land_use_assumed": land_use,
+                "curve_number": cn,
+                "years_of_record": n_years,
+                "rainfall_source": source,
+                "avg_annual_rainfall_mm": round(sum(daily_rain) / n_years, 1),
+                "avg_annual_runoff_mm": round(avg_annual_runoff_mm, 1),
+                "expected_water_volume_cubic_m": round(volume_cubic_m, 1),
+                "method": f"SCS Curve Number (NEH-4), applied per-day to daily rainfall ({source})",
+            }
+        except Exception as exc:
+            record_span_error(span, exc)
+            raise

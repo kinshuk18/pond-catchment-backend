@@ -5,6 +5,9 @@ import logging
 import httpx
 
 from services import snapshot
+from services.telemetry import get_tracer, record_span_error
+
+TRACER = get_tracer("services.elevation_client")
 
 OPEN_TOPO_URL = "https://api.opentopodata.org/v1/srtm90m"
 OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup"
@@ -123,37 +126,56 @@ async def fetch_elevation_grid_ex(
     Order: local SRTM snapshot (if DATA_MODE allows and bbox is covered), then
     OpenTopoData SRTM90m, then Open-Elevation as a full-grid fallback.
     """
-    coords = _build_coordinates(min_lon, max_lon, min_lat, max_lat, grid_size)
-
-    if snapshot.DATA_MODE != "live" and snapshot.covers(min_lon, max_lon, min_lat, max_lat):
-        elevations = snapshot.sample_elevations(coords)
-        source = snapshot.elevation_label()
-        logger.info("Elevation source=%s grid_points=%d", source, len(coords))
-        return [[lon, lat, e] for (lon, lat), e in zip(coords, elevations)], source
-    if snapshot.DATA_MODE == "snapshot":
-        raise ValueError("Bounding box is outside the snapshot coverage.")
-
-    try:
-        elevations = await _fetch_open_topo_data(coords)
-        source = "OpenTopoData"
-    except Exception as topo_error:
-        logger.warning(
-            "OpenTopoData elevation request failed; using Open-Elevation fallback: %s",
-            topo_error,
-        )
+    with TRACER.start_as_current_span("elevation.fetch_grid") as span:
+        span.set_attribute("elevation.grid_size", grid_size)
+        span.set_attribute("elevation.expected_points", grid_size * grid_size)
+        span.set_attribute("elevation.bbox.min_lon", float(min_lon))
+        span.set_attribute("elevation.bbox.max_lon", float(max_lon))
+        span.set_attribute("elevation.bbox.min_lat", float(min_lat))
+        span.set_attribute("elevation.bbox.max_lat", float(max_lat))
         try:
-            elevations = await _fetch_open_elevation(coords)
-            source = "Open-Elevation fallback"
-        except Exception as open_elevation_error:
-            raise ElevationDataSourceError(
-                "OpenTopoData primary and Open-Elevation fallback both failed. "
-                f"OpenTopoData: {topo_error}; Open-Elevation: {open_elevation_error}"
-            ) from open_elevation_error
+            coords = _build_coordinates(min_lon, max_lon, min_lat, max_lat, grid_size)
 
-    logger.info("Elevation source=%s grid_points=%d", source, len(coords))
-    grid = [[lon, lat, elevation]
-            for (lon, lat), elevation in zip(coords, elevations)]
-    return grid, source
+            if snapshot.DATA_MODE != "live" and snapshot.covers(min_lon, max_lon, min_lat, max_lat):
+                elevations = snapshot.sample_elevations(coords)
+                source = snapshot.elevation_label()
+                span.set_attribute("elevation.source", source)
+                span.set_attribute("elevation.snapshot", True)
+                logger.info("Elevation source=%s grid_points=%d", source, len(coords))
+                return [[lon, lat, e] for (lon, lat), e in zip(coords, elevations)], source
+            if snapshot.DATA_MODE == "snapshot":
+                exc = ValueError("Bounding box is outside the snapshot coverage.")
+                record_span_error(span, exc, 422)
+                raise exc
+
+            try:
+                elevations = await _fetch_open_topo_data(coords)
+                source = "OpenTopoData"
+            except Exception as topo_error:
+                logger.warning(
+                    "OpenTopoData elevation request failed; using Open-Elevation fallback: %s",
+                    topo_error,
+                )
+                try:
+                    elevations = await _fetch_open_elevation(coords)
+                    source = "Open-Elevation fallback"
+                except Exception as open_elevation_error:
+                    exc = ElevationDataSourceError(
+                        "OpenTopoData primary and Open-Elevation fallback both failed. "
+                        f"OpenTopoData: {topo_error}; Open-Elevation: {open_elevation_error}"
+                    )
+                    record_span_error(span, exc, 502)
+                    raise exc from open_elevation_error
+
+            span.set_attribute("elevation.source", source)
+            span.set_attribute("elevation.snapshot", False)
+            logger.info("Elevation source=%s grid_points=%d", source, len(coords))
+            grid = [[lon, lat, elevation]
+                    for (lon, lat), elevation in zip(coords, elevations)]
+            return grid, source
+        except Exception as exc:
+            record_span_error(span, exc)
+            raise
 
 
 async def fetch_elevation_grid(*args, **kwargs) -> list[list[float]]:

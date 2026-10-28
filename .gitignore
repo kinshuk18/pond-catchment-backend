@@ -1,5 +1,9 @@
 pondenv/
 __pycache__/
+.venv/
+*.pyc
+server.log
+.env
 
 pydeps/
 *.log

@@ -7,6 +7,9 @@ from functools import lru_cache
 
 import numpy as np
 from scipy.ndimage import distance_transform_edt, map_coordinates
+from services.telemetry import get_tracer, record_span_error
+
+TRACER = get_tracer("services.snapshot")
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +68,21 @@ def elevation_label() -> str:
 
 def sample_elevations(coords: list[tuple[float, float]]) -> list[float]:
     """coords: [(lon, lat)] -> elevation in metres, bilinear on the local SRTM tile."""
-    arr = _tile()
-    n = arr.shape[0]
-    lon = np.array([c[0] for c in coords], dtype=np.float64)
-    lat = np.array([c[1] for c in coords], dtype=np.float64)
-    rows = (LAT0 + 1.0 - lat) * (n - 1)  # row 0 = northern edge
-    cols = (lon - LON0) * (n - 1)
-    return map_coordinates(arr, [rows, cols], order=1, mode="nearest").tolist()
+    with TRACER.start_as_current_span("snapshot.sample_elevations") as span:
+        span.set_attribute("snapshot.coord_count", len(coords))
+        try:
+            arr = _tile()
+            n = arr.shape[0]
+            lon = np.array([c[0] for c in coords], dtype=np.float64)
+            lat = np.array([c[1] for c in coords], dtype=np.float64)
+            rows = (LAT0 + 1.0 - lat) * (n - 1)  # row 0 = northern edge
+            cols = (lon - LON0) * (n - 1)
+            elevs = map_coordinates(arr, [rows, cols], order=1, mode="nearest").tolist()
+            span.set_attribute("snapshot.samples_returned", len(elevs))
+            return elevs
+        except Exception as exc:
+            record_span_error(span, exc)
+            raise
 
 
 @lru_cache(maxsize=1)
@@ -82,9 +93,18 @@ def _rain() -> dict:
 
 def rainfall_series(lat: float, lon: float) -> tuple[list[float], str]:
     """Nearest prefetched rainfall cell -> (daily mm, provenance string)."""
-    data = _rain()
-    step, n = data["step"], data["n"]
-    i = min(max(round((lat - data["lat0"]) / step), 0), n - 1)
-    j = min(max(round((lon - data["lon0"]) / step), 0), n - 1)
-    key = f"{data['lat0'] + i * step:.2f},{data['lon0'] + j * step:.2f}"
-    return data["cells"][key], f"Open-Meteo snapshot ({data['start']} to {data['end']}, cell {key})"
+    with TRACER.start_as_current_span("snapshot.rainfall_series") as span:
+        span.set_attribute("snapshot.lat", float(lat))
+        span.set_attribute("snapshot.lon", float(lon))
+        try:
+            data = _rain()
+            step, n = data["step"], data["n"]
+            i = min(max(round((lat - data["lat0"]) / step), 0), n - 1)
+            j = min(max(round((lon - data["lon0"]) / step), 0), n - 1)
+            key = f"{data['lat0'] + i * step:.2f},{data['lon0'] + j * step:.2f}"
+            provenance = f"Open-Meteo snapshot ({data['start']} to {data['end']}, cell {key})"
+            span.set_attribute("snapshot.rain_cell", key)
+            return data["cells"][key], provenance
+        except Exception as exc:
+            record_span_error(span, exc)
+            raise
