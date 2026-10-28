@@ -33,7 +33,7 @@ push() {
 }
 
 missing=()
-for path in main.py services frontend data/rainfall_snapshot.json data/N21E081.hgt deploy/run.sh; do
+for path in main.py services frontend data/rainfall_snapshot.json data/N21E081.hgt deploy/run.sh deploy/build_pydeps.sh; do
   [ -e "$path" ] || missing+=("$path")
 done
 [ -d "$DEPS" ] || missing+=("$DEPS")
